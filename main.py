@@ -1,6 +1,7 @@
 import numpy as np
 import itertools as it
 import re
+import time
 
 
 class Sudoku(object):
@@ -68,12 +69,13 @@ class Sudoku(object):
                 raise AssertionError("Invalid attempt")
 
         if np.any(self.possibilities):
-            self.square_fill()
-            self.row_col_fill()
+            self.naked_singles()
+            self.hidden_singles()
+            self.singles_pointing_pairs()
             self.set_group()
             self.xwing_swordfish()
 
-    def square_fill(self):
+    def naked_singles(self):
         # fill squares based on if they can only be one number
         one_possibility_pos = np.argwhere(self.possibilities.sum(2) == 1)
         for pos in one_possibility_pos:
@@ -81,12 +83,31 @@ class Sudoku(object):
             self.field[tpos] = int(np.where(self.possibilities[tpos] == 1)[0][0])
             self.possibilities[tpos] = 0
         if one_possibility_pos.size:
-            self.set_possilities(one_possibility_pos[:, 0], one_possibility_pos[:, 1], prev="square_fill")
+            self.set_possilities(one_possibility_pos[:, 0], one_possibility_pos[:, 1], prev="naked_singles")
 
-    def row_col_fill(self):
+    def hidden_singles(self):
+        changed_i = set()
+        changed_j = set()
+        for r in range(9):
+            for n in range(10):
+                for dir in (0, 1):  # i, j
+                    if np.sum(self.possibilities[[r, range(9)][dir], [range(9), r][dir], n]) == 1:
+                        c = np.where(self.possibilities[[r, range(9)][dir], [range(9), r][dir], n] == 1)[0][0]
+                        self.field[[r, c][dir], [c, r][dir]] = n
+                        changed_i.add([r, c][dir])
+                        changed_j.add([c, r][dir])
+                        break
+                else:
+                    continue
+                break
+
+        if changed_i:
+            self.set_possilities(changed_i, changed_j, prev="hidden_singles")
+
+    def singles_pointing_pairs(self):
         # checks possibilities for rows and columns. If in some subsquare, a number can only be on positions in a line,
-        # the rest of the line cannot be this number. Automatically also checks if a number is the only number in a line
-        # that has the possibilitiy to be a certain number
+        # the rest of the line cannot be this number. Automatically also checks if a number is the only number in a
+        # subsquare
         changed_i, changed_j = set(), set()
         for iss in range(3):
             for jss in range(3):
@@ -108,7 +129,7 @@ class Sudoku(object):
                                 changed_j.add(3*jss + possibilities[1][0])
 
         if changed_i:
-            self.set_possilities(changed_i, changed_j, prev="row_col_fill")
+            self.set_possilities(changed_i, changed_j, prev="singles_pointing_pairs")
 
     def set_group(self):
         changed_i, changed_j = set(), set()
@@ -128,7 +149,7 @@ class Sudoku(object):
                         # hidden group:
                         for group in it.combinations(reg_unused, group_size):
                             for n in group:
-                                if np.sum(pos_reg[:, :, n]) != group_size:
+                                if np.sum(pos_reg[..., n]) != group_size:
                                     break
                             else:
                                 totals = np.sum(pos_reg[..., group], axis=-1)
@@ -144,7 +165,7 @@ class Sudoku(object):
                         if np.count_nonzero(reg_num_poss == group_size) == group_size:  # unnecessary line, but speeds up
                             group = set()
                             for n in range(1, 10):
-                                if np.any(pos_reg[:, :, n][reg_num_poss == group_size]):
+                                if np.any(pos_reg[..., n][reg_num_poss == group_size]):
                                     group.add(n)
                             if len(group) == group_size:
                                 group_positions = np.transpose(np.nonzero(reg_num_poss == group_size)).tolist()
@@ -183,9 +204,6 @@ class Sudoku(object):
     def brute_force(self):
         tot_possible = np.sum(self.possibilities, axis=2)
         min_pos = np.transpose(np.where(tot_possible == (tot_possible[tot_possible > 0]).min()))
-        # print(tot_possible)
-        # print((tot_possible[tot_possible > 0]).min())
-        # print(min_pos)
         for pos in min_pos:
             for n in np.nonzero(self.possibilities[pos[0], pos[1]])[0]:
                 new_sudoku = "".join(str(d) for row in self.field for d in row)
@@ -193,8 +211,8 @@ class Sudoku(object):
                 attempt = Sudoku(new_sudoku, report=False)
                 try:
                     if self.report:
-                        print("OUTER ATTEMPT")
-                    else:
+                        print("ATTEMPT")
+                    elif __name__ == "__main__":
                         print("    INNER ATTEMPT")
                     if attempt.solve():
                         self.field = attempt.field
@@ -208,6 +226,21 @@ class Sudoku(object):
         if (not all(sums)) and np.any(self.possibilities):
             if self.report:
                 print("BRUTE FORCING")
+
+            if __name__ == "__main__" and self.report:
+                print("[[ 1 2 3 4 5 6 7 8 9 ]]")
+                for j in range(9):
+                    print("ABCDEFGHJ"[j], self.field[j, :])
+
+                for i in range(1, 10):
+                    if np.any(self.possibilities[:, :, i]):
+                        print()
+                        print(i)
+                        print("[[ 1 2 3 4 5 6 7 8 9 ]]")
+                        for j in range(9):
+                            print("ABCDEFGHJ"[j], self.possibilities[j, :, i])
+                input()
+
             return self.brute_force()
         elif all(sums) and not np.any(self.possibilities):
             return True
@@ -216,11 +249,14 @@ class Sudoku(object):
 
 
 if __name__ == "__main__":
+    t0 = time.time()
     sudoku = Sudoku()
     sudoku.solve()
+    solvetime = time.time() - t0
 
     for i in range(9):
         print(" | ".join(str(" ".join(str(n) for n in sudoku.field[i, 3*jss:3*jss + 3]))for jss in range(3)), "=", np.sum(sudoku.field[i]))
         if i in (2, 5):
             print("-" * 21)
     print([np.sum(sudoku.field[:, j]) for j in range(9)])
+    print("took", solvetime, "s to solve")
